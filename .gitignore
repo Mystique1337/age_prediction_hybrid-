@@ -1,0 +1,19 @@
+# Model weights (downloaded at runtime via gdown)
+models/*.pth
+models/*.pt
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Uploads
+static/uploads/
+
+# IDE
+.vscode/
+.idea/
