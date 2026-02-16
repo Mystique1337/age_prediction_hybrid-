@@ -16,6 +16,10 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 
+# Configure OpenCV for headless mode (required for Streamlit Cloud)
+os.environ['OPENCV_VIDEOIO_DEBUG'] = '0'
+os.environ['LIBGL_ALWAYS_INDIRECT'] = '1'
+
 import cv2
 import torch
 import torch.nn as nn
