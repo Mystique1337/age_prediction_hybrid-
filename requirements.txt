@@ -1,17 +1,21 @@
 # Age Verification System v2.0 — Streamlit Deployment Requirements
 
-# ── Core Deep Learning ─────────────────────────────────────────────────────
-torch>=2.0.0
-torchvision>=0.15.0
+# ── Image Processing (MUST come before ultralytics to satisfy cv2 dep) ────
+# ultralytics depends on opencv-python (GUI build, needs libGL).
+# Installing headless first lets pip reuse it and skip the GUI build.
+opencv-python-headless>=4.8.0
 
 # ── YOLO Face Detection ────────────────────────────────────────────────────
 ultralytics>=8.2.0
 
+# ── Core Deep Learning ─────────────────────────────────────────────────────
+torch>=2.0.0
+torchvision>=0.15.0
+
 # ── Vision Transformers ────────────────────────────────────────────────────
 timm>=0.9.0
 
-# ── Image Processing & Augmentation ───────────────────────────────────────
-opencv-python-headless>=4.8.0
+# ── Image Augmentation ────────────────────────────────────────────────────
 Pillow>=9.0.0
 albumentations>=1.3.0
 
