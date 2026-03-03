@@ -21,6 +21,46 @@ from datetime import datetime
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
 os.environ["LIBGL_ALWAYS_INDIRECT"] = "1"
 
+# ── Headless-server libGL guard ──────────────────────────────────────────
+# Streamlit Cloud / Docker often lack libGL.so.1 (needed by the full
+# opencv-python build that ultralytics forces in). If it's missing we
+# create a minimal stub so cv2 can import without crashing.
+def _ensure_libgl():
+    import ctypes, ctypes.util, subprocess, struct
+    if ctypes.util.find_library("GL"):
+        return  # already present, nothing to do
+    stub = os.path.join(tempfile.gettempdir(), "libGL.so.1")
+    if not os.path.exists(stub):
+        # Try gcc first (available on most Linux images)
+        try:
+            r = subprocess.run(
+                ["gcc", "-shared", "-fPIC", "-nostdlib", "-o", stub,
+                 "-x", "c", "/dev/null"],
+                capture_output=True, timeout=15
+            )
+            if r.returncode != 0:
+                raise RuntimeError("gcc failed")
+        except Exception:
+            # Last resort: hand-craft a minimal 64-bit ELF DSO
+            # ELF header + one empty .text section + .dynamic stub
+            elf = bytearray(b"\x00" * 0x1000)
+            elf[0:4]   = b"\x7fELF"
+            elf[4]     = 2        # 64-bit
+            elf[5]     = 1        # little-endian
+            elf[6]     = 1        # ELF version
+            elf[16:18] = (3).to_bytes(2, "little")   # ET_DYN
+            elf[18:20] = (0x3E).to_bytes(2, "little") # x86-64
+            with open(stub, "wb") as fh:
+                fh.write(bytes(elf))
+    # Pre-load the stub so the dynamic linker finds "libGL"
+    try:
+        ctypes.CDLL(stub)
+        os.environ.setdefault("LD_PRELOAD", stub)
+    except OSError:
+        pass
+
+_ensure_libgl()
+
 import cv2
 import torch
 import torch.nn as nn
