@@ -1,9 +1,36 @@
-streamlit>=1.30.0
+# Age Verification System v2.0 — Streamlit Deployment Requirements
+
+# ── Core Deep Learning ─────────────────────────────────────────────────────
 torch>=2.0.0
 torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# ── YOLO Face Detection ────────────────────────────────────────────────────
+ultralytics>=8.2.0
+
+# ── Vision Transformers ────────────────────────────────────────────────────
+timm>=0.9.0
+
+# ── Image Processing & Augmentation ───────────────────────────────────────
 opencv-python-headless>=4.8.0
-numpy>=1.24.0
+Pillow>=9.0.0
+albumentations>=1.3.0
+
+# ── Web App ────────────────────────────────────────────────────────────────
+streamlit>=1.30.0
+
+# ── VLM (optional) ────────────────────────────────────────────────────────
+openai>=1.0.0
+
+# ── Model Download ─────────────────────────────────────────────────────────
 gdown>=5.1.0
-ultralytics>=8.0.0    # YOLO face detection
-timm>=0.9.0             # ViT backbone support
-openai>=1.0.0         # VLM reasoning via GPT-4V
+
+# ── Data Science ──────────────────────────────────────────────────────────
+numpy>=1.24.0
+pandas>=1.5.0
+scikit-learn>=1.2.0
+openpyxl>=3.0.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────
+tqdm>=4.65.0
+python-dotenv>=1.0.0
