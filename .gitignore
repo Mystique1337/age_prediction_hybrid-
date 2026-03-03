@@ -2,18 +2,23 @@
 models/*.pth
 models/*.pt
 
+# Keep the small bundled YOLO base model — needed as fallback
+!yolov8n.pt
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
 .env
 
-# Streamlit
+# Streamlit secrets (never commit real secrets)
 .streamlit/secrets.toml
 
-# Uploads
+# Uploads / temp
 static/uploads/
+/tmp/
 
 # IDE
 .vscode/
+.idea/
 .idea/
