@@ -83,7 +83,7 @@ import torch
 import torch.nn as nn
 from torchvision import models
 import streamlit as st
-import gdown
+import requests
 
 try:
     import timm
@@ -133,9 +133,6 @@ class Config:
     # Set MODEL_BACKBONE to match the backbone used during training
     DEFAULT_BACKBONE = os.environ.get("MODEL_BACKBONE", "densenet")
 
-    # ── Google Drive IDs (set via env or st.secrets) ──────────────────
-    GDRIVE_CNN_ID   = os.environ.get("GDRIVE_CNN_ID",  "")
-    GDRIVE_YOLO_ID  = os.environ.get("GDRIVE_YOLO_ID", "")
     CNN_FILENAME    = os.environ.get("CNN_FILENAME",  "densenet_best.pth")
     YOLO_FILENAME   = os.environ.get("YOLO_FILENAME", "yolo_face_best.pt")
 
@@ -148,6 +145,17 @@ class Config:
         "vit-tiny":        "vit_base_best.pth",  # no separate tiny weights; falls back to base
     }
 
+    # ── GitHub Release download URLs (no auth required for public repo) ──
+    _GH_BASE = "https://github.com/Mystique1337/age_prediction_hybrid-/releases/download/v1.0-models"
+    MODEL_URLS = {
+        "densenet_best.pth":        f"{_GH_BASE}/densenet_best.pth",
+        "resnet50_best.pth":        f"{_GH_BASE}/resnet50_best.pth",
+        "efficientnet_v2_best.pth": f"{_GH_BASE}/efficientnet_v2_best.pth",
+        "convnext_best.pth":        f"{_GH_BASE}/convnext_best.pth",
+        "vit_base_best.pth":        f"{_GH_BASE}/vit_base_best.pth",
+        "yolo_face_best.pt":        f"{_GH_BASE}/yolo_face_best.pt",
+    }
+
     @staticmethod
     def get_openai_key():
         key = os.environ.get("OPENAI_API_KEY", "")
@@ -157,24 +165,6 @@ class Config:
             except Exception:
                 key = ""
         return key
-
-    @staticmethod
-    def get_gdrive_cnn_id():
-        cid = os.environ.get("GDRIVE_CNN_ID", "")
-        try:
-            cid = cid or st.secrets.get("GDRIVE_CNN_ID", "")
-        except Exception:
-            pass
-        return cid
-
-    @staticmethod
-    def get_gdrive_yolo_id():
-        yid = os.environ.get("GDRIVE_YOLO_ID", "")
-        try:
-            yid = yid or st.secrets.get("GDRIVE_YOLO_ID", "")
-        except Exception:
-            pass
-        return yid
 
 
 # ─── Model Definitions (must match training architecture) ──────────────────
@@ -252,20 +242,30 @@ class ViTAgePrediction(nn.Module):
 
 
 # ─── Model Download Helpers ────────────────────────────────────────────────
-def _gdrive_download(file_id: str, dest_path: str, label: str) -> bool:
-    """Download a file from Google Drive if not already cached."""
+def _gh_download(url: str, dest_path: str, label: str) -> bool:
+    """Download a file from a GitHub Release URL with progress display."""
     if os.path.exists(dest_path):
         return True
-    if not file_id or file_id in ("", "YOUR_CNN_MODEL_ID", "YOUR_YOLO_MODEL_ID"):
-        return False
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     try:
-        st.info(f"⬇️  Downloading {label} from Google Drive …")
-        url = f"https://drive.google.com/uc?id={file_id}"
-        gdown.download(url, dest_path, quiet=False)
+        st.info(f"⬇️  Downloading {label} …")
+        with requests.get(url, stream=True, timeout=300, allow_redirects=True) as r:
+            r.raise_for_status()
+            total = int(r.headers.get("content-length", 0))
+            bar = st.progress(0, text=f"Downloading {label}…")
+            downloaded = 0
+            with open(dest_path, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1 << 20):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        bar.progress(min(downloaded / total, 1.0), text=f"Downloading {label}… {downloaded>>20}MB/{total>>20}MB")
+            bar.empty()
         return os.path.exists(dest_path)
     except Exception as e:
-        logger.warning(f"Drive download failed for {label}: {e}")
+        logger.warning(f"GitHub download failed for {label}: {e}")
+        if os.path.exists(dest_path):
+            os.remove(dest_path)
         return False
 
 
@@ -550,31 +550,24 @@ if HAS_WEBRTC:
 
 # ─── Auto-download models on startup ──────────────────────────────────────
 @st.cache_resource(show_spinner=False)
-def _ensure_models(model_dir: str, cnn_filename: str, yolo_filename: str):
-    """Download missing model files from Google Drive at app startup."""
+def _ensure_models(model_dir: str):
+    """Download all missing model files from GitHub Releases at app startup."""
     os.makedirs(model_dir, exist_ok=True)
-
-    def _try_download(secret_key: str, dest: str, label: str):
-        if os.path.exists(dest):
-            return True
-        file_id = ""
-        try:
-            file_id = st.secrets.get(secret_key, "")
-        except Exception:
-            pass
-        file_id = file_id or os.environ.get(secret_key, "")
-        if not file_id:
-            return False
-        try:
-            url = f"https://drive.google.com/uc?id={file_id}"
-            gdown.download(url, dest, quiet=False)
-            return os.path.exists(dest)
-        except Exception as e:
-            logger.warning(f"Auto-download failed for {label}: {e}")
-            return False
-
-    _try_download("GDRIVE_CNN_ID",  os.path.join(model_dir, cnn_filename),  "CNN weights")
-    _try_download("GDRIVE_YOLO_ID", os.path.join(model_dir, yolo_filename), "YOLO weights")
+    missing = [
+        (fname, url)
+        for fname, url in Config.MODEL_URLS.items()
+        if not os.path.exists(os.path.join(model_dir, fname))
+    ]
+    if not missing:
+        return
+    st.info(f"📦 Downloading {len(missing)} missing model file(s) from GitHub Releases…")
+    for fname, url in missing:
+        dest = os.path.join(model_dir, fname)
+        ok = _gh_download(url, dest, fname)
+        if ok:
+            logger.info(f"Downloaded {fname} → {dest}")
+        else:
+            logger.warning(f"Failed to download {fname}")
 
 
 # ─── Main App ─────────────────────────────────────────────────────────────
@@ -589,8 +582,8 @@ def main():
     st.title("🔬 Age Verification System v2.0")
     st.caption("YOLO Multi-Face Detection → CNN Age Prediction → VLM Per-Face Reasoning")
 
-    # Auto-download model weights from Google Drive if not present locally
-    _ensure_models(Config.MODEL_DIR, Config.CNN_FILENAME, Config.YOLO_FILENAME)
+    # Auto-download model weights from GitHub Releases if not present locally
+    _ensure_models(Config.MODEL_DIR)
 
     # ── Sidebar ──────────────────────────────────────────────────────────
     with st.sidebar:
@@ -635,14 +628,14 @@ def main():
             value=os.path.join(Config.MODEL_DIR, Config.YOLO_FILENAME),
         )
 
-        if st.button("⬇️  Download from Google Drive"):
-            cnn_id = Config.get_gdrive_cnn_id()
-            yolo_id = Config.get_gdrive_yolo_id()
-            if cnn_id:
-                ok = _gdrive_download(cnn_id, cnn_path_input, "CNN model")
+        if st.button("⬇️  Re-download from GitHub Releases"):
+            _cnn_url = Config.MODEL_URLS.get(os.path.basename(cnn_path_input), "")
+            _yolo_url = Config.MODEL_URLS.get(os.path.basename(yolo_path_input), "")
+            if _cnn_url:
+                ok = _gh_download(_cnn_url, cnn_path_input, "CNN model")
                 st.success("CNN downloaded ✅") if ok else st.error("CNN download failed ❌")
-            if yolo_id:
-                ok = _gdrive_download(yolo_id, yolo_path_input, "YOLO model")
+            if _yolo_url:
+                ok = _gh_download(_yolo_url, yolo_path_input, "YOLO model")
                 st.success("YOLO downloaded ✅") if ok else st.error("YOLO download failed ❌")
 
     # ── Load Models ───────────────────────────────────────────────────────
