@@ -242,10 +242,24 @@ class ViTAgePrediction(nn.Module):
 
 
 # ─── Model Download Helpers ────────────────────────────────────────────────
+def _is_valid_model_file(path: str, min_bytes: int = 1 << 20) -> bool:
+    """Return True only if path is a non-empty PyTorch zip archive (magic PK\x03\x04)."""
+    try:
+        if os.path.getsize(path) < min_bytes:
+            return False
+        with open(path, "rb") as fh:
+            return fh.read(4) == b"PK\x03\x04"
+    except Exception:
+        return False
+
+
 def _gh_download(url: str, dest_path: str, label: str) -> bool:
     """Download a file from a GitHub Release URL with progress display."""
     if os.path.exists(dest_path):
-        return True
+        if _is_valid_model_file(dest_path):
+            return True
+        logger.warning(f"Corrupt/incomplete file detected at {dest_path}; re-downloading.")
+        os.remove(dest_path)
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     try:
         st.info(f"⬇️  Downloading {label} …")
@@ -284,9 +298,12 @@ def load_cnn_model(backbone: str, model_path: str, device_str: str):
         model = AgePredictionCNN(backbone=backbone_lower)
 
     if os.path.exists(model_path):
-        state = torch.load(model_path, map_location=device, weights_only=True)
-        model.load_state_dict(state)
-        logger.info(f"CNN loaded from {model_path}")
+        try:
+            state = torch.load(model_path, map_location=device, weights_only=True)
+            model.load_state_dict(state)
+            logger.info(f"CNN loaded from {model_path}")
+        except Exception as e:
+            logger.warning(f"Failed to load CNN weights from {model_path}: {e}. Using random weights.")
     else:
         logger.warning(f"CNN weights not found at {model_path}. Using random weights.")
 
@@ -551,17 +568,17 @@ if HAS_WEBRTC:
 # ─── Auto-download models on startup ──────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def _ensure_models(model_dir: str):
-    """Download all missing model files from GitHub Releases at app startup."""
+    """Download all missing or corrupt model files from GitHub Releases at app startup."""
     os.makedirs(model_dir, exist_ok=True)
-    missing = [
+    needed = [
         (fname, url)
         for fname, url in Config.MODEL_URLS.items()
-        if not os.path.exists(os.path.join(model_dir, fname))
+        if not _is_valid_model_file(os.path.join(model_dir, fname))
     ]
-    if not missing:
+    if not needed:
         return
-    st.info(f"📦 Downloading {len(missing)} missing model file(s) from GitHub Releases…")
-    for fname, url in missing:
+    st.info(f"📦 Downloading {len(needed)} model file(s) from GitHub Releases…")
+    for fname, url in needed:
         dest = os.path.join(model_dir, fname)
         ok = _gh_download(url, dest, fname)
         if ok:
