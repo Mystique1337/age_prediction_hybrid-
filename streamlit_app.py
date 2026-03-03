@@ -21,43 +21,60 @@ from datetime import datetime
 os.environ["OPENCV_VIDEOIO_DEBUG"] = "0"
 os.environ["LIBGL_ALWAYS_INDIRECT"] = "1"
 
-# ── Headless-server libGL guard ──────────────────────────────────────────
-# Streamlit Cloud / Docker often lack libGL.so.1 (needed by the full
-# opencv-python build that ultralytics forces in). If it's missing we
-# create a minimal stub so cv2 can import without crashing.
+# ── Headless-server shared-library guard ────────────────────────────────
+# Streamlit Cloud (Debian trixie) may be missing libs that the full
+# opencv-python build (forced by ultralytics) needs at import time.
+# We stub every one of them before `import cv2` runs.
 def _ensure_libgl():
-    import ctypes, ctypes.util, subprocess, struct
-    if ctypes.util.find_library("GL"):
-        return  # already present, nothing to do
-    stub = os.path.join(tempfile.gettempdir(), "libGL.so.1")
-    if not os.path.exists(stub):
-        # Try gcc first (available on most Linux images)
+    import ctypes, ctypes.util, subprocess
+
+    NEEDED = [
+        "libGL.so.1",
+        "libgthread-2.0.so.0",
+        "libglib-2.0.so.0",
+        "libGLdispatch.so.0",
+    ]
+
+    def _make_stub(name: str) -> str:
+        path = os.path.join(tempfile.gettempdir(), name)
+        if os.path.exists(path):
+            return path
+        # Try gcc first (available on most CI images)
         try:
             r = subprocess.run(
-                ["gcc", "-shared", "-fPIC", "-nostdlib", "-o", stub,
+                ["gcc", "-shared", "-fPIC", "-nostdlib", "-o", path,
                  "-x", "c", "/dev/null"],
                 capture_output=True, timeout=15
             )
-            if r.returncode != 0:
-                raise RuntimeError("gcc failed")
+            if r.returncode == 0 and os.path.exists(path):
+                return path
         except Exception:
-            # Last resort: hand-craft a minimal 64-bit ELF DSO
-            # ELF header + one empty .text section + .dynamic stub
-            elf = bytearray(b"\x00" * 0x1000)
-            elf[0:4]   = b"\x7fELF"
-            elf[4]     = 2        # 64-bit
-            elf[5]     = 1        # little-endian
-            elf[6]     = 1        # ELF version
-            elf[16:18] = (3).to_bytes(2, "little")   # ET_DYN
-            elf[18:20] = (0x3E).to_bytes(2, "little") # x86-64
-            with open(stub, "wb") as fh:
-                fh.write(bytes(elf))
-    # Pre-load the stub so the dynamic linker finds "libGL"
-    try:
-        ctypes.CDLL(stub)
-        os.environ.setdefault("LD_PRELOAD", stub)
-    except OSError:
-        pass
+            pass
+        # Fallback: hand-craft a minimal 64-bit ELF DSO (344 bytes)
+        import struct
+        e_ident = (b"\x7fELF" + b"\x02\x01\x01" + b"\x00" * 9)
+        header = struct.pack(
+            "<HHIQQQIHHHHHH",
+            3, 0x3E, 1,   # ET_DYN, x86-64, version
+            0, 0, 0,      # entry, phoff, shoff
+            0, 64, 0, 0,  # flags, ehsize, phentsize, phnum
+            64, 0, 0      # shentsize, shnum, shstrndx
+        )
+        with open(path, "wb") as fh:
+            fh.write(e_ident + header)
+        return path
+
+    for libname in NEEDED:
+        if ctypes.util.find_library(libname.split(".")[0].replace("lib", "", 1)):
+            continue  # already on system
+        try:
+            stub = _make_stub(libname)
+            ctypes.CDLL(stub)
+            prev = os.environ.get("LD_PRELOAD", "")
+            if stub not in prev:
+                os.environ["LD_PRELOAD"] = f"{stub}:{prev}".rstrip(":")
+        except OSError:
+            pass
 
 _ensure_libgl()
 
